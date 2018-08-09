@@ -17,7 +17,7 @@ from collections import Iterable
 import ml_battery.nhts_data as nhts_data
 
 def fit_model_(model, X, y, **fit_params):
-    """docstring!"""
+    ''' Fits a pickled model.  Handy for multiprocessing and such '''
     import ml_battery.log as log
     name, estimator = model
     log.info("training " + name)
@@ -30,14 +30,17 @@ def fit_model_(model, X, y, **fit_params):
     return ((name, estimator), (name, end-start))
 
 def weighted_cv(model_class, X, y, weights, **hyperparameters):
+    ''' cross validation with sample_weights '''
     model = model_class(**hyperparameters)
     return -1*cross_val_scores_weighted(model, X, y, weights, cv=5, metrics=[sklearn.metrics.mean_squared_error])
 
 def train_n_score_weighted_pickled_model_(model, X, y, split, sample_weight=None, metrics=[sklearn.metrics.accuracy_score], **fit_params):
+    ''' cross validation scoring of a pickled model... useful for multiprocessing model scoring '''
     estimator = pickle.loads(model)
     return train_n_score_weighted(estimator, X, y, split, sample_weight=sample_weight, metrics=metrics, **fit_params)
     
 def train_n_score_weighted(model, X, y, split, sample_weight=None, metrics=[sklearn.metrics.accuracy_score], **fit_params):
+    ''' cross validation scoring of a model.  Useful for hyperparameter selection '''
     model_clone = sklearn.base.clone(model)
     train_index, test_index = split
     X_train, X_test = X[train_index], X[test_index]
@@ -57,6 +60,7 @@ def train_n_score_weighted(model, X, y, split, sample_weight=None, metrics=[skle
     return scores
     
 def cross_val_scores_weighted_parallel(model, X, y, sample_weight=None, kf=sklearn.model_selection.StratifiedKFold(n_splits=5), metrics=[sklearn.metrics.accuracy_score], **fit_params):
+    ''' parallelized cross validation scores... Useful for hyperparameter selection, fast '''
     X,y = sklearn.utils.check_X_y(X,y)
     if sample_weight is not None:
         sample_weight = np.array(sample_weight)
@@ -78,6 +82,10 @@ def cross_val_scores_weighted(model, X, y, sample_weight=None, kf=sklearn.model_
     return np.array(scores)
     
 class CodebookTransformer(object):
+    ''' Transformer that one-hots categorical variables and scales numeric ones.
+        Takes in a codebook pandas dataframe with index "Name" of data columns, and a column "Type" that has value "C" for categorical variables.
+        X_possible_values is to pass in the entire dataset, so as to successfully one-hot variables even if they aren't in the training split.
+        TODO: This should probably be refactored to a CategoricalTransformer and a ScalingTransformer and not take in a codebook the way it does. '''
     def __init__(self, codebook, sep="_____", scale_numeric=True, X_possible_values=None):
         self.codebook = codebook
         self.sep = sep
@@ -132,18 +140,17 @@ class CodebookTransformer(object):
         
 
 def xy_accuracy(model,X,y,sample_weight=None):
+    ''' sklearn.metrics.accuracy_score takes in y_pred and y_true.  This is a helper that does the prediction step from X and a model '''
     y_pred = model.predict(X)
     return sklearn.metrics.accuracy_score(y, y_pred, sample_weight=sample_weight)
     
 def xy_mse(model,X,y,sample_weight=None):
+    ''' sklearn.metrics.mean_squared_error takes in y_pred and y_true.  This is a helper that does the prediction step from X and a model '''
     y_pred = model.predict(X)
     return sklearn.metrics.mean_squared_error(y, y_pred, sample_weight=sample_weight)
-        
-def cv_weighted(model_klass, X, y, sample_weight=None, **hyperparameters):
-    model = model_klass(**hyperparameters)
-    return cross_val_scores_weighted(model, X, y, sample_weight=sample_weight, cv=5).mean()
 
 def cv_weighted_instantiated_model(model, X, y, sample_weight=None, kf=sklearn.model_selection.StratifiedKFold(n_splits=5), metrics=[sklearn.metrics.accuracy_score], parallel=False, **hyperparameters):
+    ''' does weighted cv scores for hyperparameter selection '''
     model = sklearn.base.clone(model)
     model.set_params(**hyperparameters)
     if parallel:
@@ -152,6 +159,14 @@ def cv_weighted_instantiated_model(model, X, y, sample_weight=None, kf=sklearn.m
         return cross_val_scores_weighted(model, X, y, sample_weight=sample_weight, kf=kf, metrics=metrics).mean()
     
 class HyperparameterOptimizedEstimator(object):
+        ''' Class for doing hyperparameter selection.
+            Parameters:
+                model: an instantiated model.  Any model params are respected, unless they are passed to the hyperparameter_bounds parameters
+                parallel: whether to do this in parallel TODO: broken
+                kf: the cross validation kfold strategy to use.
+                hyperparameter_bounds: any other numerical hyperparameters to `model` can be passed in here, as a tuple e.g. (1,80).
+                    The fit method will do a search for the optimal hyperparameters within those bounds. 
+                    NOTE: If you pass in integer bounds, it will try to find an integer solution.  Pass in float bounds if the hyperparameter is continuous e.g. (1.0, 7.0)''' 
         def __init__(self, model, parallel=False, kf=sklearn.model_selection.StratifiedKFold(n_splits=5), metric=sklearn.metrics.accuracy_score, **hyperparameter_bounds):
             self.hyperparameter_bounds = hyperparameter_bounds
             self.model = model
@@ -177,6 +192,7 @@ class HyperparameterOptimizedRegressor(HyperparameterOptimizedEstimator):
         super().__init__(model, parallel, kf, metric, **hyperparameter_bounds)    
   
 class IntegerRegressor(sklearn.base.BaseEstimator):
+    ''' Regression that rounds to the nearest integer '''
     def __init__(self, model):
         self.model = model
     def predict_(self,X,*args,**kwargs):
@@ -199,18 +215,21 @@ class IntegerRegressor(sklearn.base.BaseEstimator):
         return self
 
 class SelectFromModelPandas(sklearn.feature_selection.SelectFromModel):
+    ''' Same as sklearn.model_selection.SelectFromModel, but supports pandas dataframes '''
     def transform(self, X, *args, **kwargs):
         log.info("performing feature selection")
         new_X = super().transform(X, *args, **kwargs)
         return pd.DataFrame(new_X, columns=X.columns[self.get_support()])
 
 class PatchedDummy(sklearn.dummy.DummyClassifier):
+    ''' Same as sklearn.dummy.DummyClassifier but supports pandas dataframes '''
     def fit(self,X,y,**fit_args):
         import sklearn.utils
         X,y = sklearn.utils.check_X_y(X,y)
         return super().fit(X,y,**fit_args)
         
 class PatchedDummyRegressor(sklearn.dummy.DummyRegressor):
+    ''' Same as sklearn.dummy.DummyClassifier but supports pandas dataframes '''
     def fit(self,X,y,**fit_args):
         import sklearn.utils
         X,y = sklearn.utils.check_X_y(X,y)

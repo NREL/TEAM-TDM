@@ -13,11 +13,19 @@ import ml_battery.permutation_importance as permutation_importance
 import ml_battery.log as log
     
 def pickle_estimators(estimators):
+    ''' Pickle a list of estimators.  Useful for multiprocessing them '''
     return list(map(lambda x: (x[0], pickle.dumps(x[1])), estimators))
 def unpickle_estimators(estimators):
+    ''' UnPickle a list of estimators.  Useful for multiprocessing them '''
     return list(map(lambda x: (x[0], pickle.loads(x[1])), estimators))
 
 def classifier_score_battery(y_onehot, y_pred_proba, y_true, y_pred, sample_weight=None):
+    ''' A bunch of scores for classifiers 
+        weighted and macro scores give average scores over all one-vs-rest metrics.
+        weighted is weighted by class representation (minority classes count less)
+        macro is not weighted (minority classes count equally to majority classes)
+        comparing these is useful for identifying class imbalance problems
+        mean_absolute_market_share_error is the absolute error per class, as a percentage, averaged over the number of classes '''
     accuracy = sklearn.metrics.accuracy_score(y_true, y_pred, sample_weight=sample_weight)
     
     weighted_f1_score = sklearn.metrics.f1_score(y_true, y_pred, average="weighted", sample_weight=sample_weight)
@@ -34,8 +42,8 @@ def classifier_score_battery(y_onehot, y_pred_proba, y_true, y_pred, sample_weig
     
     total_true_by_class, total_pred_by_class = np.sum(confusion, 1), np.sum(confusion, 0)
     absolute_error = np.abs(total_true_by_class - total_pred_by_class)
-    macro_mean_absolute_market_share_percent_error = (absolute_error/total_true_by_class).sum()
-    weighted_mean_absolute_market_share_percent_error = absolute_error.sum()/total_true_by_class.sum()
+    macro_mean_absolute_market_share_percent_error = (absolute_error/total_true_by_class).sum()/confusion.shape[0]
+    weighted_mean_absolute_market_share_percent_error = absolute_error.sum()/total_true_by_class.sum()/confusion.shape[0]
 
     #put it all together
     score_battery = [accuracy, weighted_f1_score, weighted_precision, weighted_recall, macro_f1_score, macro_precision, macro_recall, log_loss, macro_mean_absolute_market_share_percent_error, weighted_mean_absolute_market_share_percent_error]
@@ -43,6 +51,7 @@ def classifier_score_battery(y_onehot, y_pred_proba, y_true, y_pred, sample_weig
     return score_battery, confusion
 
 def regressor_score_battery(y_true, y_pred, sample_weight=None):
+    ''' A bunch of scores for regressors '''
     evs = sklearn.metrics.explained_variance_score(y_true, y_pred, sample_weight=sample_weight)
     mae = sklearn.metrics.mean_absolute_error(y_true, y_pred, sample_weight=sample_weight)
     mse = sklearn.metrics.mean_squared_error(y_true, y_pred, sample_weight=sample_weight)
@@ -54,11 +63,13 @@ def regressor_score_battery(y_true, y_pred, sample_weight=None):
     return score_battery
 
 class MultiEstimator(sklearn.utils.metaestimators._BaseComposition):
+    ''' This is a helper for training many models in parallel. '''
     def __init__(self, estimators, parallel=False):
         self.estimators = estimators
         self.parallel = parallel
 
     def cleanup(self):
+        ''' Easy cleanup of any models... specifically, closes models' tensorflow sessions '''
         for estimator in self.estimators: #clean up temporary estimators
             if hasattr(estimator, "sess"):
                 estimator.sess.close()
@@ -87,6 +98,7 @@ class MultiEstimator(sklearn.utils.metaestimators._BaseComposition):
             return self
 
     def predict(self, X):
+        ''' returns predictions for each model, so this is a list of many models' predictions '''
         prediction_battery = []
         for name, model in self.estimators:
             pred = model.predict(X)
@@ -107,6 +119,11 @@ class MultiRegressor(MultiEstimator):
         return score_battery, feature_importances
         
     def score(self, X, y, sample_weight=None):
+        ''' applies the regressor score battery to all the models.  Also does feature importance 
+        Returns: 
+            score_battery: pd dataframe of scores for all the models
+            confusion_battery: dict of confusion matrices for all the models
+            feature_importances: per-model feature importances'''
         score_battery = {}
         feature_importances = {}
         
@@ -155,6 +172,11 @@ class MultiClassifier(MultiEstimator):
         return score_battery, confusion, feature_importances
         
     def score(self, X, y, sample_weight=None):
+        ''' applies the classifier score battery to all the models.  Also does feature importance 
+            Returns: 
+                score_battery: pd dataframe of scores for all the models
+                confusion_battery: dict of confusion matrices for all the models
+                feature_importances: per-model feature importances'''
         score_battery = {}
         confusion_battery = {}
         feature_importances = {}
@@ -171,6 +193,11 @@ class MultiClassifier(MultiEstimator):
     
  
 class StackedEstimator(sklearn.base.BaseEstimator):
+    ''' This provides a means for creating a "stacked" model, given a bunch of estimators in the form of a multiestimator. 
+        Parameters:
+            multiestimator: a MultiEstimator
+            metaestimator: the model to use to stack the other model outputs
+            kfold: the means of splitting up the data to make predictions... generally, more is better, but slower'''
     def __init__(self, multiestimator=None, metaestimator=None, kfold=sklearn.model_selection.KFold(n_splits=5)):
         self.multiestimator = multiestimator
         self.metaestimator = metaestimator
@@ -180,6 +207,10 @@ class StackedEstimator(sklearn.base.BaseEstimator):
     def predict(self, X):
         stacked_features = self.get_stacked_features_(self.multiestimator, X)
         return self.metaestimator.predict(np.hstack((X, stacked_features)))
+    def get_stacked_features_(self, multiestimator, X):
+        ''' this should be implemented in a subclass to get a bunch of predictions
+        from all the models all stacked together '''
+        raise NotImplementedError()
                
     def fit(self, X, y, sample_weight=None):
         start = time.time()
@@ -220,9 +251,16 @@ class StackedEstimator(sklearn.base.BaseEstimator):
         self.fit_time = end-start
         
         return self   
-
+    def set_output_shape_(self, y):
+        ''' this should be implemented to set the output shape, so that we can put all the predictions in a matrix '''
+        raise NotImplementedError()
 
 class StackedRegressor(StackedEstimator):
+    ''' This provides a means for creating a "stacked" model, given a bunch of estimators in the form of a multiestimator. 
+        Parameters:
+            multiestimator: a MultiEstimator
+            metaestimator: the model to use to stack the other model outputs
+            kfold: the means of splitting up the data to make predictions... generally, more is better, but slower'''
     def get_stacked_features_(self, multiestimator, X):
         new_features = np.zeros((X.shape[0], len(multiestimator.estimators)*self.output_shape_))
         predictions = multiestimator.predict(X)
@@ -237,6 +275,7 @@ class StackedRegressor(StackedEstimator):
             self.output_shape_ = 1        
             
     def score(self, X, y, sample_weight=None):
+        ''' applies the regressor_score_battery to the model '''
         pred = self.predict(X)
 
         score_battery = regressor_score_battery(y, pred, sample_weight = sample_weight)
@@ -252,6 +291,11 @@ class StackedRegressor(StackedEstimator):
         
         
 class StackedClassifier(StackedEstimator):
+    ''' This provides a means for creating a "stacked" model, given a bunch of estimators in the form of a multiestimator. 
+        Parameters:
+            multiestimator: a MultiEstimator
+            metaestimator: the model to use to stack the other model outputs
+            kfold: the means of splitting up the data to make predictions... generally, more is better, but slower'''
     def __init__(self, multiestimator=None, metaestimator=None, kfold=sklearn.model_selection.StratifiedKFold(n_splits=5)):
         super().__init__(multiestimator, metaestimator, kfold)
         
@@ -274,6 +318,7 @@ class StackedClassifier(StackedEstimator):
         return self.metaestimator.predict_proba(np.hstack((X, stacked_features)))
     
     def score(self,X,y,sample_weight=None):
+        ''' applies the classifier_score_battery to the model '''
         pred = self.predict(X)
         y_onehot = self.onehot_encoder.transform(self.label_encoder.transform(y).reshape((-1,1)))
         try:

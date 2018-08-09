@@ -9,6 +9,12 @@ from ml_battery.tensorflow_models import *
 import ml_battery.log as log
      
 class OrdinalRegression(sklearn.base.BaseEstimator, PickleableTFModel, TFClassifierMixin):
+    ''' Implements an ordinal regression, by learning latent variables theta that are the
+        "distance" between ordinals 
+        Parameters:
+            inverse_link_function: probit or logit
+            n_epochs: how long to train the model
+            batch_size: defaults to the entire dataset'''
     def __init__(self, inverse_link_function="logit", n_epochs=1000, batch_size=None):
         self.inverse_link_function = inverse_link_function
         self.n_epochs = n_epochs
@@ -25,7 +31,7 @@ class OrdinalRegression(sklearn.base.BaseEstimator, PickleableTFModel, TFClassif
         if self.inverse_link_function == "probit": return tf.distributions.Normal(0.,1.).cdf  
 
     def build_model_(self):
-        # create model
+        ''' the actual model architecture '''
         n_features = list(self.input_shape_)
         self.model.theta = tf.Variable(tf.truncated_normal([len(self.classes_)-1], stddev=0.5), dtype="float", name="theta")
         self.model.sorted_theta = tf.contrib.framework.sort(self.model.theta)

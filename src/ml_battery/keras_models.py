@@ -11,6 +11,7 @@ import pdb
 ####TODO!!!! THIS WHOLE THING IS BROKED FOR PARALLEL PURPOSES, DUE TO KERAS DEPENDING HEAVILY ON A GLOBAL SESSION!  maybe we can fix it one day.... until then, use the tensorflow versions.
 
 def sessioned(f):
+    ''' This creates a session for the model when needed upon calling a method TODO: broke '''
     def sessioned_f(self, *args, **kwargs):
         if not hasattr(self, "sess"):
             self.sess = tf.Session()
@@ -22,6 +23,7 @@ def sessioned(f):
     return sessioned_f
 
 class PickleableKerasModel(object):
+    ''' Handy mixin for pickling keras models '''
     TEMP_MODEL_FILE_ = "a_temporary_file_for_storing_a_keras_model.h5"
     
     @sessioned

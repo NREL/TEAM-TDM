@@ -3,6 +3,10 @@ import sklearn.naive_bayes
 import numpy as np
 
 class MixedNB(sklearn.base.BaseEstimator):
+    ''' Mixed Naive Bayes for discrete and continuous features.  
+        Uses a sklearn.naive_bayes.GaussianNB for the continuous features and
+        uses a sklearn.naive_bayes.MultinomialNB for the discrete ones.
+        Probabilities from the two are then multiplied and normalized to 1, in the standard naive bayes way. '''
         
     def fit(self,X,y,sample_weight=None):
         X,y = sklearn.utils.check_X_y(X,y)

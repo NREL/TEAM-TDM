@@ -6,16 +6,18 @@ import zipfile
 import random
 from ml_battery.utils import *
 import ml_battery.log as log
-#from ml_battery.ordinal_regression import *
 
 TF_CONFIG_ = tf.ConfigProto()
 TF_CONFIG_.gpu_options.allow_growth = True
 
 SESSIONS_ = []
 def n_opened_sessions():
+    ''' Stuff in here keeps a reference to every opened session in SESSIONS_.
+        Useful for debugging rogue tf sessions lying about '''
     return str((len(SESSIONS_) - sum(list(map(lambda x: x._closed, SESSIONS_))))) + "/" + str(len(SESSIONS_))
 
 def np_batcher(n, batch_size=None):
+    ''' Batch data from a numpy array '''
     if batch_size is None:
         yield slice(None)
         return
@@ -25,12 +27,21 @@ def np_batcher(n, batch_size=None):
         i += batch_size
     
 class NameSpace(object):
+    ''' This is to create a dict-like object that allows access via dot syntax.
+        e.g. `stuff_keeper = NameSpace(); stuff_keeper.some_stuff = some_stuff_to_keep` '''
     pass
 
 class PickleableTFModel(object):
+    ''' This mixin allows a tensorflow model class to be pickleable.
+    
+        Your tensorflow model must implement a `build_model` method, and store all of the 
+        tf.Variables (and probably the rest of in an attribute `self.model` as attributes of `self.model` 
+        
+        Before saving, your tensorflow model must be initialized into a session stored in `self.sess`'''
     TEMP_MODEL_FILE_ = "tmp_tf_model"
     
     def __getvariables__(self):
+        ''' helper method that goes through the `self.model` and picks out which things are `tf.Variables` '''
         with self.model.graph_.as_default():
             d = dict(self.__dict__)
             variables = {}
@@ -101,13 +112,20 @@ class PickleableTFModel(object):
   
 
 class TFEstimatorMixin(object):
+    ''' This class implements helpful things that our tensorflow models will generally want to have,
+        such as initializing the graph, initializing the session, building the model, setting input and output shapes
+        for use in the model, and iterating a training step over a number of epochs '''
     def build_model(self):
+        ''' Initializes a new graph, and then calls the .build_model_ method, which must be implemented by a TFEstimator '''
         self.model = NameSpace()
         self.model.graph_ = tf.Graph()
         with self.model.graph_.as_default():
             self.build_model_()
+    def build_model_(self):
+        raise NotImplementedError()
             
     def fit(self, X, y, sample_weight=None, **fit_params):
+        ''' Puts inputs into np format, initializes a session, builds the graph and then calls `.fit_` which can be overridden by individual models '''
         X,y = sklearn.utils.check_X_y(X,y)
         if sample_weight is None: 
             sample_weight = np.ones(X.shape[0])
@@ -122,8 +140,12 @@ class TFEstimatorMixin(object):
             initializer = tf.global_variables_initializer()
             self.sess.run(initializer)
             return self.fit_(X, y, sample_weight=sample_weight, **fit_params)
-            
+    def set_output_shape_(*args, **kwargs):
+        ''' Must implement this for the fit method to work '''
+        raise NotImplementedError()
+       
     def fit_(self, X, y, sample_weight=None, feed_dict_extras={}):
+        ''' Trains for a number of epochs.  Model input must be in self.model.x, output in self.model.y, loss in self.model.loss, and training using self.model.train_step '''
         if not hasattr(self, "batch_size"):
             self.batch_size = None
         
@@ -147,12 +169,15 @@ class TFEstimatorMixin(object):
   
   
 class TFClassifierMixin(TFEstimatorMixin):
+    ''' Has specific things that would be useful for classifiers.'''
 
     def set_output_shape_(self, y):
+        ''' This sets the number of classes and the vectorized output shape for a categorical variable '''
         self.classes_ = np.unique(y)
         self.output_shape_ = (len(self.classes_),)
     
     def predict_proba(self, X):
+        ''' Assuming that self.model implements a predict_proba tensorflow graph element '''
         return self.sess.run(
             self.model.predict_proba, 
             feed_dict={
@@ -160,6 +185,7 @@ class TFClassifierMixin(TFEstimatorMixin):
             })
             
     def fit_(self, X, y, sample_weight=None, feed_dict_extras={}):
+        ''' This does some additional transformation on y before eventually fitting the model '''
         label_encoder = sklearn.preprocessing.LabelEncoder()
         label_encoder.classes_ = self.classes_
         onehot_encoder = sklearn.preprocessing.OneHotEncoder().fit(np.arange(len(label_encoder.classes_)).reshape((-1,1)))
@@ -167,24 +193,29 @@ class TFClassifierMixin(TFEstimatorMixin):
         return super().fit_(X,y,sample_weight=sample_weight)
             
     def predict(self,X):
+        ''' Returns the most likely class '''
         probas = self.predict_proba(X)
         return self.classes_[np.argmax(probas, axis=1)]     
 
         
 class TFRegressorMixin(TFEstimatorMixin):
+    ''' Has specific things that would be useful for regressors.'''
 
     def set_output_shape_(self, y):
+        ''' logic to handle 1d y variables '''
         if len(y.shape) > 1:
             self.output_shape_ = y.shape[1:]
         else:
             self.output_shape_ = (1,) 
                
     def fit_(self, X, y, sample_weight=None, feed_dict_extras={}):
+        ''' more logic to handle 1d y variables prior to fitting '''
         if len(y.shape) == 1:
             y = y.reshape((-1,1))
         return super().fit_(X,y,sample_weight=sample_weight, feed_dict_extras=feed_dict_extras)
                
     def predict(self,X):
+        ''' Assumes that self.model.predictions is a tf graph element returning a prediction ''' 
         return self.sess.run(
             self.model.predictions,
             feed_dict={
@@ -193,7 +224,17 @@ class TFRegressorMixin(TFEstimatorMixin):
             
         
 class OneLayerNNClassifier(sklearn.base.BaseEstimator, PickleableTFModel, TFClassifierMixin):
-    def __init__(self, n_hidden=20, n_epochs=1000, learning_rate=0.01, trainable=True, regularization=0.01, dropout=0.5, batch_size=None):
+    ''' A one hidden layer NN Classifier.  Hidden layer is activated by a relu.
+        Parameters:
+            n_hidden: number of hidden neurons
+            n_epochs: number of training epochs
+            learning_rate: make it bigger to learn faster, at the risk of killing your relu
+            trainable: set to false if you want to not allow training.  For example, if you want to use this as part of another network
+            regularization: penalize large weights (higher is more penalization)
+            dropout: the default dropout rate on the hidden layer (note that 1 == NO DROPOUT, 0 == 100% DROPOUT)
+            batch_size: defaults to the entire dataset.
+    '''
+    def __init__(self, n_hidden=20, n_epochs=1000, learning_rate=0.01, trainable=True, regularization=0.01, dropout=1.0, batch_size=None):
         self.n_hidden = n_hidden
         self.n_epochs = n_epochs
         self.learning_rate = learning_rate
@@ -204,12 +245,13 @@ class OneLayerNNClassifier(sklearn.base.BaseEstimator, PickleableTFModel, TFClas
         super().__init__()
     
     def fit_(self, X, y, sample_weight=None, feed_dict_extras={}):
+        ''' Feeds the extra feed_dict thing `keep_prob` to the network, to allow adjusting the dropout '''
         feed_dict = {self.model.keep_prob: self.dropout}
         feed_dict.update(feed_dict_extras)
         return super().fit_(X,y,sample_weight=sample_weight, feed_dict_extras=feed_dict)
     
     def build_model_(self):
-        # create model
+        ''' The actual network architecture '''
         with tf.name_scope("one_hidden"):
         
             with tf.name_scope("layer_0_input"):
@@ -260,6 +302,15 @@ class OneLayerNNClassifier(sklearn.base.BaseEstimator, PickleableTFModel, TFClas
         return self.model
         
 class LogisticRegression(sklearn.base.BaseEstimator, PickleableTFModel, TFClassifierMixin):
+    ''' A zero hidden layer NN Classifier (i.e. Logit Regression).
+        Parameters:
+            n_epochs: number of training epochs
+            learning_rate: make it bigger to learn faster, at the risk of killing your relu
+            trainable: set to false if you want to not allow training.  For example, if you want to use this as part of another network
+            regularization: penalize large weights (higher is more penalization)
+            dropout: the default dropout rate on the hidden layer (note that 1 == NO DROPOUT, 0 == 100% DROPOUT)
+            batch_size: defaults to the entire dataset.
+    '''
     def __init__(self, n_epochs=1000, learning_rate=0.01, trainable=True, regularization=0.01, batch_size=None):
         self.n_epochs = n_epochs
         self.learning_rate = learning_rate
@@ -269,7 +320,7 @@ class LogisticRegression(sklearn.base.BaseEstimator, PickleableTFModel, TFClassi
         super().__init__()
     
     def build_model_(self):
-        # create model
+        ''' The actual network architecture '''
         with tf.name_scope("logistic_regression"):
         
             with tf.name_scope("layer_0_input"):
@@ -307,6 +358,16 @@ class LogisticRegression(sklearn.base.BaseEstimator, PickleableTFModel, TFClassi
         return self.model
         
 class OneLayerNNRegressor(sklearn.base.BaseEstimator, PickleableTFModel, TFRegressorMixin):
+    ''' A one hidden layer NN Classifier.  Hidden layer is activated by a relu.
+        Parameters:
+            n_hidden: number of hidden neurons
+            n_epochs: number of training epochs
+            learning_rate: make it bigger to learn faster, at the risk of killing your relu
+            trainable: set to false if you want to not allow training.  For example, if you want to use this as part of another network
+            regularization: penalize large weights (higher is more penalization)
+            dropout: the default dropout rate on the hidden layer (note that 1 == NO DROPOUT, 0 == 100% DROPOUT)
+            batch_size: defaults to the entire dataset.
+    '''
     def __init__(self, n_hidden=20, n_epochs=1000, learning_rate=0.01, trainable=True, regularization=0.01, dropout=0.5, batch_size=None, scale=1.0):
         self.n_hidden = n_hidden
         self.n_epochs = n_epochs
@@ -318,11 +379,14 @@ class OneLayerNNRegressor(sklearn.base.BaseEstimator, PickleableTFModel, TFRegre
         self.scale = scale
         super().__init__()
     
-    def fit_(self, X, y, sample_weight=None):
-        return super().fit_(X,y,sample_weight=sample_weight, feed_dict_extras={self.model.keep_prob: self.dropout})
+    def fit_(self, X, y, sample_weight=None, feed_dict_extras={}):
+        ''' Feeds the extra feed_dict thing `keep_prob` to the network, to allow adjusting the dropout '''
+        feed_dict = {self.model.keep_prob: self.dropout}
+        feed_dict.update(feed_dict_extras)
+        return super().fit_(X,y,sample_weight=sample_weight, feed_dict_extras=feed_dict)
     
     def build_model_(self):
-        # create model
+        ''' The actual network architecture '''
         with tf.name_scope("one_hidden"):
 
             with tf.name_scope("layer_0_input"):

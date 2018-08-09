@@ -14,6 +14,7 @@ class Files(object):
     vehicle = os.path.join(DATA_DIR, "vehpub.csv")
     
 class load_nhts(object):
+    ''' Handy methods for loading in nhts 2017 dataset '''
     @staticmethod
     def _fetch():
         url = "https://nhts.ornl.gov/assets/2016/download/Csv.zip"
@@ -30,22 +31,27 @@ class load_nhts(object):
             utils.download_a_thing(url, CODEBOOK_PATH)
     @staticmethod    
     def codebook(sheet_name=0):
+        ''' load the nhts codebook... change sheet_name to, e.g. 3 to get vehicle codes '''
         load_nhts._fetch_codebook()
         return pd.read_excel(CODEBOOK_PATH, sheet_name=sheet_name)     
     @staticmethod
     def household():
+        ''' load the household nhts dataset '''
         load_nhts._fetch()
         return pd.read_csv(Files.household)
     @staticmethod
     def person():
+        ''' load the person nhts dataset '''
         load_nhts._fetch()
         return pd.read_csv(Files.person)
     @staticmethod
     def trip():
+        ''' load the trip nhts dataset '''
         load_nhts._fetch()
         return pd.read_csv(Files.trip)
     @staticmethod
     def vehicle():
+        ''' load the vehicle level nhts dataset '''
         load_nhts._fetch()
         return pd.read_csv(Files.vehicle)
         

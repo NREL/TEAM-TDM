@@ -6,6 +6,9 @@ from ml_battery.utils import *
 # nesting_structure should be a list of list of list of... defining a tree T such that set(T.flatten()) == (np.unique(y)) 
 # if set(T) == set(np.unique(y)), then the NestedClassifier is identical to classifier
 class NestedClassifier(sklearn.base.BaseEstimator):
+    ''' MetaClassifier for nesting classifiers.  i.e. the output of a nested classifer is used as input for a higher classifier in the nest.
+    nesting_structure should be a list of list of list of... defining a tree T such that set(T.flatten()) == (np.unique(y)) 
+    if set(T) == set(np.unique(y)), then the NestedClassifier is identical to classifier'''
     def __init__(self, classifier=None, nesting_structure=None):
         self.nesting_structure = nesting_structure
         self.classifier = classifier
