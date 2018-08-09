@@ -1,3 +1,28 @@
+# TEAM-TDM
+
+This is a package for easy application of multiple machine learning models to a single problem, and comparison via various metrics.
+For a pretty detailed description of the models that are available in the tool, and a quite detailed description of the metrics that it pumps out, see [the paper](https://github.com/NREL/TEAM-TDM/blob/master/paper/trb_paper.pdf).
+
+## Installation
+
+1) Clone the repo.
+2) Put all of your code into the `src/` folder
+3) Import modules as `import ml_battery.some_modules` or `from ml_battery import *`
+4) TODO: Create a `setup.py` for farill installation
+
+## Usage
+
+Probably the easiest thing to do is to just copy one of the existing jupyter notebooks, and repurpose it with your own data.
+
+* You have to test/train split your own data, and input a codebook identifying categorical features.  
+  See the `fuel_use.ipynb` for a good example of reading in a csv and pumping it into the pipeline
+* You can edit items in the model, but you can just run it as-is for first-pass results.
+* As such, the model, fitting and scoring lines can all just be run, without editing for new datasets.  
+
+## Docs
+
+There is a sphinx documentation framework here.  To build it, go into the docs/ folder and `$make html` (or `./make html` on windows)
+This will create a bunch of handy documentation of the individual functions and classes available in the ml_battery library.
 
 <!--
 
