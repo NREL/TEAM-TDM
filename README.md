@@ -1,7 +1,7 @@
 # TEAM-TDM
 
 This is a package for easy application of multiple machine learning models to a single problem, and comparison via various metrics.
-For a pretty detailed description of the models that are available in the tool, and a quite detailed description of the metrics that it pumps out, see [the paper](https://github.com/NREL/TEAM-TDM/blob/master/paper/trb_paper.pdf).
+For a pretty detailed description of the models that are available in the tool, and a quite detailed description of the metrics that it pumps out, see [the paper](https://github.com/NREL/TEAM-TDM/blob/master/paper/team_tdm.pdf).
 
 ## Installation
 
