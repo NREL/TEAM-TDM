@@ -19,6 +19,13 @@ Probably the easiest thing to do is to just copy one of the existing jupyter not
 * You can edit items in the model, but you can just run it as-is for first-pass results.
 * As such, the model, fitting and scoring lines can all just be run, without editing for new datasets.  
 
+### Logging
+
+Because all of this stuff has the ability to run multiple processes, it imports a handy `log to a socket` functionality from `ml_battery.log`.
+In order to log to a socket, there needs to be a logger reading from that socket.
+Fortunately, the `src/ml_battery/logging_server.py` script is exactly that.
+Run the `logging_server.py` script from anywhere, and a file will be created in the working directory called `test.log` that logs all of the output from the `ml_battery` functions.
+
 ## Docs
 
 There is a sphinx documentation framework here.  To build it, go into the docs/ folder and `$make html` (or `./make html` on windows)
